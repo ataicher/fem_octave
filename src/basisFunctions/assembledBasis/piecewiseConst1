@@ -1,0 +1,23 @@
+# Created by Octave 3.8.1, Mon Aug 17 16:45:50 2015 PDT <ataicher@ataicher-Inspiron-7548>
+# name: basis
+# type: scalar
+1
+
+
+# name: basisDer
+# type: matrix
+# rows: 1
+# columns: 2
+ 0 0
+
+
+# name: edgeBasis
+# type: matrix
+# ndims: 4
+ 1 1 1 4
+ 1
+ 1
+ 1
+ 1
+
+

@@ -1,0 +1,707 @@
+function assembleBasis
+
+dim = 2;
+numLocalEdges = 4;
+
+% set the reference element
+refNodes = [ -1 -1 ; 1 -1 ; 1 1 ; -1 1]';
+refArea = 4;
+
+% basis types
+basisTypeStr = {'AWVelocity', 'P1Quad', 'P1Quad2', 'piecewiseConst','RT0Velocity'};
+
+prec = 23;
+
+% Gauss quadrature on the interval [-1,1]
+[numQuadPoints1D, quadPoints1D, quadWeights1D] = GaussData(prec);
+
+% obtain Gauss quadrature information on a 2D quadrelateral defined by
+% refNodes from 1D information
+[numQuadPoints, quadPoints, quadWeights] = construct2DQuad(numQuadPoints1D, ...
+    quadPoints1D, quadWeights1D, refNodes, dim);
+
+% obtain Gauss quadrature on each edge of the cell
+[numEdgeQuadPoints, edgeQuadWeights, edgeQuadPoints] = constructEdgeQuad(numQuadPoints1D, ...
+    quadPoints1D, quadWeights1D, numLocalEdges, refNodes, dim);
+
+for type=1:length(basisTypeStr)
+    
+    fprintf('checking basis function: %s\n', basisTypeStr{type})
+    
+    % obtain basis function information
+    basisType = str2func(basisTypeStr{type});
+    [basisNumComp, numBasisFuncs, basisRefNodes, basisInfo] = basisType();
+    
+    % transform quad points defined on refNodes to basisRefNodes
+    if refNodes ~= basisRefNodes
+        [quadPoints, edgeQuadPoints] = transformQuadPoints(refNodes, basisRefNodes, quadPoints, edgeQuadPoints);
+    end
+    
+    % evaluate basis functions and derivatives at quadrature points
+    [basis, basisDer] = constructBasis(numBasisFuncs, dim, basisNumComp, numQuadPoints, quadPoints, basisInfo);
+  
+    % evaluate basis functions on quadrature points of each edge
+    edgeBasis = constructEdgeBasis(numBasisFuncs, basisNumComp, numEdgeQuadPoints, edgeQuadPoints, numLocalEdges, basisInfo);
+    
+    % check compatibility
+    if length(basisInfo) ~= numBasisFuncs
+        error('myApp:argChk', 'incompatible finite element basis description file. numBasisFuncs is not equal to the size of basisInfo')
+    end
+    for b = 1:numBasisFuncs
+        funStr = func2str(basisInfo(b).fun);
+        if ~strcmp(funStr(1:7),'@(x, y)')
+          error('myApp:argChk', 'basis function %d should be a function of x and y', b)
+        end
+        if length(basisInfo(b).fun(0,0)) ~= basisNumComp
+            error('myApp:argChk', 'incompatible number of components for basis function %d', b)
+        end
+    end
+    
+    % get total number of degreee of freedom types for basis
+    DOFTypes = cell(1,numBasisFuncs);
+    for b=1:numBasisFuncs
+        DOFTypes{b} = basisInfo(b).DOFType;
+    end
+    DOFTypes = unique(DOFTypes);
+    
+    for b = 1:numBasisFuncs
+        DOFType = basisInfo(b).DOFType;
+        geoType = basisInfo(b).geoType;
+        geoNum = basisInfo(b).geoNum;
+        fun = basisInfo(b).fun;
+        DOFCnt = 0;
+        
+        % nodal
+        if any(strcmp(DOFTypes,'nodal'))
+            
+            for lNPtr=1:numLocalEdges
+                
+                DOFVal = fun(refNodes(1,lNPtr),refNodes(2,lNPtr));
+                
+                if abs(DOFVal) > 1e-10
+                    DOFCnt = DOFCnt + 1;
+                    if abs(DOFVal - 1) < 1e-10
+                        if ~strcmp(DOFType, 'nodal') || ~strcmp(geoType, 'node') || (geoNum ~= lNPtr)
+                            error('myApp:argChk', 'incompatible DOF for basis function %d', b)
+                        end
+                    else
+                        error('myApp:argChk', 'dof value not equal to 1 for basis function %d', b)
+                    end
+                end
+            end
+        end
+        
+        % averageVal
+        if any(strcmp(DOFTypes,'averageVal'))
+            
+            DOFVal = 0;
+            for q=1:numQuadPoints
+                DOFVal = DOFVal + (1/refArea)*quadWeights(q)*basis(b,1,q);
+            end
+            
+            if abs(DOFVal) > 1e-10
+                DOFCnt = DOFCnt + 1;
+                if abs(DOFVal - 1) < 1e-10
+                    if ~strcmp(DOFType, 'averageVal') || ~strcmp(geoType, 'face') || (geoNum ~= 1)
+                        error('myApp:argChk', 'incompatible DOF for basis function %d', b)
+                    end
+                else
+                    error('myApp:argChk', 'dof value not equal to 1 for basis function %d', b)
+                end
+            end
+        end
+        
+        % nodal1
+        if any(strcmp(DOFTypes,'nodal1'))
+            
+            for lNPtr=1:numLocalEdges
+                
+                DOFVal= fun(refNodes(1,lNPtr),refNodes(2,lNPtr));
+                
+                if abs(DOFVal(1)) > 1e-10
+                    DOFCnt = DOFCnt + 1;
+                    if abs(DOFVal(1) - 1) < 1e-10
+                        if ~strcmp(DOFType, 'nodal1') || ~strcmp(geoType, 'node') || (geoNum ~= lNPtr)
+                            error('myApp:argChk', 'incompatible DOF for basis function %d', b)
+                        end
+                    else
+                        error('myApp:argChk', 'dof value not equal to 1 for basis function %d', b)
+                    end
+                end
+            end
+        end
+        
+        % nodal2
+        if any(strcmp(DOFTypes,'nodal2'))
+            
+            for lNPtr=1:numLocalEdges
+                
+                DOFVal= fun(refNodes(1,lNPtr),refNodes(2,lNPtr));
+                
+                if abs(DOFVal(2)) > 1e-10
+                    DOFCnt = DOFCnt + 1;
+                    if abs(DOFVal(2) - 1) < 1e-10
+                        if ~strcmp(DOFType, 'nodal2') || ~strcmp(geoType, 'node') || (geoNum ~= lNPtr)
+                            error('myApp:argChk', 'incompatible DOF for basis function %d', b)
+                        end
+                    else
+                        error('myApp:argChk', 'dof value not equal to 1 for basis function %d', b)
+                    end
+                end
+            end
+            
+        end
+        
+        % normalFlux
+        if any(strcmp(DOFTypes,'normalFlux'))
+            
+            for lEPtr=1:numLocalEdges
+                eQuadWeights = edgeQuadWeights(:,lEPtr);
+                
+                n = [0 1 ; -1 0]*(refNodes(:,mod(lEPtr,4)+1) - refNodes(:,lEPtr));
+                n = n/norm(n);
+                DOFVal = 0;
+                for q=1:numEdgeQuadPoints
+                    for comp =1:2
+                        DOFVal = DOFVal + eQuadWeights(q)*edgeBasis(b,comp,q,lEPtr)*n(comp);
+                    end
+                end
+                
+                if abs(DOFVal) > 1e-10
+                    DOFCnt = DOFCnt + 1;
+                    if abs(DOFVal - 1) < 1e-10
+                        if ~strcmp(DOFType, 'normalFlux') || ~strcmp(geoType, 'edge') || (geoNum ~= lEPtr)
+                            error('myApp:argChk', 'incompatible DOF for basis function %d', b)
+                        end
+                    else
+                        error('myApp:argChk', 'dof value not equal to 1 for basis function %d', b)
+                    end
+                end
+            end
+        end
+        
+        % tangentFlux
+        if any(strcmp(DOFTypes,'tangentFlux'))
+            
+            for lEPtr=1:numLocalEdges
+                eQuadWeights = edgeQuadWeights(:,lEPtr);
+                
+                tau = (refNodes(:, mod(lEPtr,4)+1) - refNodes(:,lEPtr));
+                tau = tau/norm(tau);
+                DOFVal = 0;
+                for q=1:numEdgeQuadPoints
+                    for comp =1:2
+                        DOFVal = DOFVal + eQuadWeights(q)*edgeBasis(b,comp,q,lEPtr)*tau(comp);
+                    end
+                end
+                
+                if abs(DOFVal) > 1e-10
+                    DOFCnt = DOFCnt + 1;
+                    if abs(DOFVal - 1) < 1e-10
+                        if ~strcmp(DOFType, 'tangentFlux') || ~strcmp(geoType, 'edge') || (geoNum ~= lEPtr)
+                            error('myApp:argChk', 'incompatible DOF for basis function %d', b)
+                        end
+                    else
+                        error('myApp:argChk', 'dof value not equal to 1 for basis function %d', b)
+                    end
+                end
+            end
+            
+        end
+        
+        % averageVal1
+        if any(strcmp(DOFTypes,'averageVal1'))
+            
+            DOFVal = 0;
+            for q=1:numQuadPoints
+                DOFVal = DOFVal + (1/refArea)*quadWeights(q)*basis(b,1,q);
+            end
+            
+            if abs(DOFVal) > 1e-10
+                DOFCnt = DOFCnt + 1;
+                if abs(DOFVal - 1) < 1e-10
+                    if ~strcmp(DOFType, 'averageVal1') || ~strcmp(geoType, 'face') || (geoNum ~= 1)
+                        error('myApp:argChk', 'incompatible DOF for basis function %d', b)
+                    end
+                else
+                    error('myApp:argChk', 'dof value not equal to 1 for basis function %d', b)
+                end
+            end
+        end
+        
+        
+        % averageVal2
+        if any(strcmp(DOFTypes,'averageVal2'))
+            
+            DOFVal = 0;
+            for q=1:numQuadPoints
+                DOFVal = DOFVal + (1/refArea)*quadWeights(q)*basis(b,2,q);
+            end
+            
+            if abs(DOFVal) > 1e-10
+                DOFCnt = DOFCnt + 1;
+                if abs(DOFVal - 1) < 1e-10
+                    if ~strcmp(DOFType, 'averageVal2') || ~strcmp(geoType, 'face') || (geoNum ~= 1)
+                        error('myApp:argChk', 'incompatible DOF for basis function %d', b)
+                    end
+                else
+                    error('myApp:argChk', 'dof value not equal to 1 for basis function %d', b)
+                end
+            end
+        end
+        
+        if DOFCnt ~= 1
+            error('myApp:argChk', 'basis function %d is not orthogonal for degrees of freedom', b)
+        end
+        
+        for b2=1:numBasisFuncs
+            if b ~= b2 && strcmp(basisInfo(b2).DOFType, DOFType) && strcmp(basisInfo(b2).geoType, geoType) && basisInfo(b2).geoNum == geoNum
+                error('myApp:argChk', 'basis functions %d and %d have the same geoType, and geoNum', b, b2)
+            end
+        end
+    end    
+end
+
+% build basis, basisDer, and edgeBasis arrays
+for prec=1:23
+    
+    % Gauss quadrature on the interval [-1,1]
+    [numQuadPoints1D, quadPoints1D, quadWeights1D] = GaussData(prec);
+    
+    % obtain Gauss quadrature information on a 2D quadrelateral defined by
+    % refNodes from 1D information
+    [numQuadPoints, quadPoints, ~] = construct2DQuad(numQuadPoints1D, ...
+        quadPoints1D, quadWeights1D, refNodes, dim);
+    
+    % obtain Gauss quadrature on each edge of the cell
+    [numEdgeQuadPoints, ~, edgeQuadPoints] = constructEdgeQuad(numQuadPoints1D, ...
+        quadPoints1D, quadWeights1D, numLocalEdges, refNodes, dim);
+    
+    for type=1:length(basisTypeStr)
+        
+        fprintf('building basis, basisDer, and edgeBasis with quadrature precision %d for %s\n', prec, basisTypeStr{type})
+        
+        % obtain basis function information
+        basisType = str2func(basisTypeStr{type});
+        [basisNumComp, numBasisFuncs, basisRefNodes, basisInfo] = basisType();
+        
+        % transform quad points defined on refNodes to basisRefNodes
+        if refNodes ~= basisRefNodes
+            [quadPoints, edgeQuadPoints] = transformQuadPoints(refNodes, basisRefNodes, quadPoints, edgeQuadPoints);
+        end
+        
+        % evaluate basis functions and derivatives at quadrature points
+        [basis, basisDer] = constructBasis(numBasisFuncs, dim, basisNumComp, numQuadPoints, quadPoints, basisInfo);
+        
+        % evaluate basis functions on quadrature points of each edge
+        edgeBasis = constructEdgeBasis(numBasisFuncs, basisNumComp, numEdgeQuadPoints, edgeQuadPoints, numLocalEdges, basisInfo);
+        
+        fileName = [ '~/Desktop/fem-octave/src/basisFunctions/assembledBasis/', basisTypeStr{type}, num2str(prec)];
+        save(fileName,'basis', 'basisDer', 'edgeBasis')
+    end
+end
+
+end
+
+
+%% TRANSFORMQUADPOINTS
+function [quadPoints, edgeQuadPoints] = transformQuadPoints(refNodes, basisRefNodes, quadPoints, edgeQuadPoints)
+% choose 2 corresponding edges in the reference element of the basis
+% and reference element used for the quadrature rule
+e1B = basisRefNodes(:,2)-basisRefNodes(:,1);
+e2B = basisRefNodes(:,3)-basisRefNodes(:,1);
+bRef = [e1B e2B];
+e1 = refNodes(:,2)-refNodes(:,1);
+e2 = refNodes(:,3)-refNodes(:,1);
+ref = [e1 e2];
+
+% e1 = J*e1B, e2 = J*e2B
+J = ref*inv(bRef);
+
+% transform quad points
+quadPoints = J*quadPoints;
+edgeQuadPoints(:,:,1) = J(1,:)*edgeQuadPoints(:,:,1);
+edgeQuadPoints(:,:,2) = J(3,:)*edgeQuadPoints(:,:,2);
+edgeQuadPoints(:,:,3) = J(1,:)*edgeQuadPoints(:,:,3);
+edgeQuadPoints(:,:,4) = J(3,:)*edgeQuadPoints(:,:,4);
+end
+
+
+%% CONSTRUCTBASIS
+% construct basis data from given basis functions
+%
+% INPUT:
+%   numBasisFuncs: number of basis functions for each field
+%   dim:           dimension of problem (must be 2)
+%   numComp:       number of components of basis functions
+%   numQuadPoints: number of quadrature points for reference cell
+%   quadPoints:    2 by numQuadPoints array.  The ith column contains
+%                  the (x,y) coordinates of the ith quadrature points
+%   basisRefNodes: reference nodes defined by basis function
+%   refNodes:      reference nodes for quadrature
+%   basisInfo:     struct containing info for each basis function
+%
+% OUTPUT:
+%   basis:         array containing basis function values at quadrature
+%                  points on the reference element for each field.
+%                  basis{f}(b,comp,q) contains the value of basis function
+%                  b for component comp at quadrature points q of field f
+%   basisDer:      array containing basis function derivative values at
+%                  quadrature points on the reference element for each
+%                  field. basisDer(b,d,comp,q) contains the value of basis
+%                  function b derivative in the direction d for component
+%                  comp at quadrature points q of field f
+%
+function [basis, basisDer] = constructBasis(numBasisFuncs, dim, numComp, numQuadPoints, quadPoints, basisInfo)
+
+%symbols;
+%gradFun1 = sym('gradFun1');
+%gradFun2 = sym('gradFun2');
+%x = sym('x');
+%y = sym('y');
+%sym gradFun1 gradFun2 x y;
+basis = zeros(numBasisFuncs,numComp,numQuadPoints);
+basisDer = zeros(numBasisFuncs,dim,numComp,numQuadPoints);
+for b=1:numBasisFuncs
+    %gradFun1x = symfun(differentiate(basisInfo(b).fun.x,x),[x y]);
+    %gradFun2 = symfun(differentiate(basisInfo(b).fun(x,y),y),[x y]);
+    
+    for q=1:numQuadPoints
+        basis(b,:,q) = basisInfo(b).fun(quadPoints(1,q),quadPoints(2,q));
+        basisDer(b,:,:,q) = basisInfo(b).gradFun(quadPoints(1,q),quadPoints(2,q))';
+    end
+end
+
+end
+
+
+%% CONSTRUCTEDGEBASIS
+% construct edgeBasis data from given basis functions
+%
+% INPUT:
+%   numBasisFuncs:     number of basis functions for each field
+%   dim:               dimension of problem (must be 2)
+%   numComp:           number of components of basis functions
+%   numEdgeQuadPoints: number of quadrature points for each reference edge
+%                      (must be equal for all cell edges)
+%   edgeQuadPoints:    2 by numEdgeQuadPoints by numLocalEdges array.
+%                      edgeQuadPoints(:,j,k) contains the (x,y) coordinates
+%                      of the jth edge quarature point of the kth local
+%                      edge
+%   numLocalEdges:     number of edges in each cell (equal for all cells)
+%   basisFuncs:        function handles containing the basis functions.
+%                      basisfuncs{comp,b} contains component comp of the
+%                      basis function b
+%
+% OUTPUT:
+%   edgeBasis:         array containing basis function values at quadrature
+%                      points on the reference element edges for each
+%                      field. edgeBasis{f}(b,comp,q,lE) contains the value
+%                      of basis function b for component comp at quadrature
+%                      points q of local edge lE of field f
+%   edgeBasisDer:      array containing basis function derivative values at
+%                      quadrature points on the reference element edges for
+%                      each field. edgeBasisDer(b,d,comp,q,lE) contains the
+%                      value of basis function b derivative in the
+%                      direction d for component comp at quadrature points
+%                      q of local edge lE of field f
+%
+function [edgeBasis] = constructEdgeBasis(numBasisFuncs, numComp, numEdgeQuadPoints, edgeQuadPoints, numLocalEdges, basisInfo)
+
+edgeBasis = zeros(numBasisFuncs,numComp,numEdgeQuadPoints,numLocalEdges);
+for lEPtr = 1:numLocalEdges
+    for q=1:numEdgeQuadPoints
+        for b=1:numBasisFuncs
+            edgeBasis(b,:,q,lEPtr) = basisInfo(b).fun(edgeQuadPoints(1,q,lEPtr),edgeQuadPoints(2,q,lEPtr));
+        end
+    end
+end
+
+end
+
+
+%% CONSTRUCT2DQUAD
+% constrct 2D quadrature information on a quadrelateral given 1D quadrature
+% information on the interval [-1,1]
+%
+% INPUT:
+%   numQuadPoints1D: number of quadrature points for 1D interval
+%   quadPoints1D:    numQuadPoints1D array.  The entry contains the
+%                    coordinate of the ith quadrature points
+%   quadWeights1D:   numQuadPoints length array containing the quadrature
+%                    weights for each quadrature point in quadPoints
+%   refNodes:        reference element nodes ordered counter-clockwise
+%                    beginning with bottom left node
+%   dim:             dimension of problem (always 2)
+%
+% OUTPUT:
+%   numQuadPoints:  number of quadrature points for reference cell
+%   quadPoints:     2 by numQuadPoints array.  The ith column contains
+%                   the (x,y) coordinates of the ith quadrature points
+%   quadWeights:    numQuadPoints length array containing the quadrature
+%                   weights for each quadrature point in quadPoints
+%
+function [numQuadPoints, quadPoints, quadWeights] = construct2DQuad(numQuadPoints1D, ...
+    quadPoints1D, quadWeights1D, refNodes, dim)
+
+numQuadPoints = numQuadPoints1D^2;
+quadPoints = zeros(dim,numQuadPoints);
+quadWeights = zeros(numQuadPoints,1);
+for j=1:numQuadPoints1D
+    for i=1:numQuadPoints1D
+        q = (j-1)*numQuadPoints1D + i;
+        quadPoints(:,q) =  [quadPoints1D(i) ; quadPoints1D(j)];
+        quadWeights(q) = quadWeights1D(j)*quadWeights1D(i);
+    end
+end
+
+n1 = refNodes(:,1);
+n2 = refNodes(:,2);
+n4 = refNodes(:,4);
+edgeLength1 = norm(n2-n1);
+edgeLength2 = norm(n2-n1);
+J = [(n2-n1)/2 (n4-n1)/2];
+for q=1:numQuadPoints
+    quadPoints(:,q) = J*(quadPoints(:,q)-n1) + n1;
+    quadWeights(q) = (edgeLength1/2)*(edgeLength2/2)*quadWeights(q);
+end
+end
+
+
+%% CONSRUCTEDGEQUAD
+% construct edge quadrature information on a quadrelateral given 1D
+% quadrature information on the interval [-1,1]
+%
+% INPUT:
+%   numQuadPoints1D: number of quadrature points for 1D interval
+%   quadPoints1D:    numQuadPoints1D array.  The entry contains the
+%                    coordinate of the ith quadrature points
+%   quadWeights1D:   numQuadPoints length array containing the quadrature
+%                    weights for each quadrature point in quadPoints
+%   numLocalEdges:   number of edges in each cell (equal for all cells)
+%   refNodes:        reference element nodes ordered counter-clockwise
+%                    beginning with bottom left node
+%   dim:             dimension of problem (always 2)
+%
+% OUTPUT:
+%   numEdgeQuadPoints: number of quadrature points for each reference edge
+%                      (must be equal for all cell edges)
+%   edgeQuadPoints:    2 by numEdgeQuadPoints by numLocalEdges array.
+%                      edgeQuadPoints(:,j,k) contains the (x,y) coordinates
+%                      of the jth edge quarature point of the kth local
+%                      edge
+%   edgeQuadWeights:   numEdgeQuadPoints by numLocalEdges array containing
+%                      the quadrature weights for each quadrature point in
+%                      edgeQuadPoints for each local edge
+%
+function [numEdgeQuadPoints, edgeQuadWeights, edgeQuadPoints] = constructEdgeQuad(numQuadPoints1D, ...
+    quadPoints1D, quadWeights1D, numLocalEdges, refNodes, dim)
+
+numEdgeQuadPoints = numQuadPoints1D;
+edgeQuadWeights = zeros(numEdgeQuadPoints,numLocalEdges);
+edgeQuadPoints = zeros(dim,numEdgeQuadPoints,numLocalEdges);
+for lE = 1:numLocalEdges
+    n1 = refNodes(:,lE);
+    n2 = refNodes(:,mod(lE,numLocalEdges)+1);
+    edgeLength = norm(n2-n1);
+    for q=1:numEdgeQuadPoints
+        edgeQuadWeights(q,lE) = (edgeLength/2)*quadWeights1D(q);
+        edgeQuadPoints(:,q,lE) = ((n2-n1)/2)*quadPoints1D(q) + ((n1+n2)/2);
+    end
+end
+end
+
+
+%% GAUSSDATA
+% produces the nodes and weights for the Gaussian quadrature rule on
+% [a,b] having degree of precision prec.  The precision is limited to
+% 0<=prec<=23. This routine is part of the MATLAB Fem code that
+% accompanies "Understanding and Implementing the Finite
+% Element Method" by Mark S. Gockenbach (copyright SIAM 2006).
+%
+% INPUT:
+%   prec:  Gauss quadrature precision
+%   a(-1): left endpoint
+%   b(1):  right endpoint
+% OUTPUT:
+%   nqpts: number of quadrature points
+%   qpts:  nqpts long array of quadrature points
+%   qwts:  nqpts long array of quadrature weights
+%
+function [nqpts, qpts,qwts]=GaussData(p,a,b)
+
+nodes=[
+    0.0000000000000000e+00
+    -5.7735026918962573e-01
+    5.7735026918962573e-01
+    -7.7459666924148340e-01
+    0.0000000000000000e+00
+    7.7459666924148340e-01
+    -8.6113631159405302e-01
+    -3.3998104358485626e-01
+    3.3998104358485626e-01
+    8.6113631159405291e-01
+    -9.0617984593866396e-01
+    -5.3846931010568289e-01
+    0.0000000000000000e+00
+    5.3846931010568300e-01
+    9.0617984593866385e-01
+    -9.3246951420315205e-01
+    -6.6120938646626459e-01
+    -2.3861918608319677e-01
+    2.3861918608319677e-01
+    6.6120938646626470e-01
+    9.3246951420315205e-01
+    -9.4910791234275904e-01
+    -7.4153118559939368e-01
+    -4.0584515137739718e-01
+    0.0000000000000000e+00
+    4.0584515137739707e-01
+    7.4153118559939446e-01
+    9.4910791234275904e-01
+    -9.6028985649753695e-01
+    -7.9666647741362617e-01
+    -5.2553240991632888e-01
+    -1.8343464249564978e-01
+    1.8343464249564989e-01
+    5.2553240991632899e-01
+    7.9666647741362606e-01
+    9.6028985649753684e-01
+    -9.6816023950762597e-01
+    -8.3603110732663699e-01
+    -6.1337143270059025e-01
+    -3.2425342340380880e-01
+    0.0000000000000000e+00
+    3.2425342340380880e-01
+    6.1337143270059080e-01
+    8.3603110732663488e-01
+    9.6816023950762697e-01
+    -9.7390652851717197e-01
+    -8.6506336668898398e-01
+    -6.7940956829902455e-01
+    -4.3339539412924699e-01
+    -1.4887433898163116e-01
+    1.4887433898163116e-01
+    4.3339539412924699e-01
+    6.7940956829902444e-01
+    8.6506336668898398e-01
+    9.7390652851717197e-01
+    -9.7822865814603999e-01
+    -8.8706259976811996e-01
+    -7.3015200657404225e-01
+    -5.1909612920681159e-01
+    -2.6954315595234490e-01
+    0.0000000000000000e+00
+    2.6954315595234490e-01
+    5.1909612920681170e-01
+    7.3015200657405002e-01
+    8.8706259976809299e-01
+    9.7822865814605797e-01
+    -9.8156063424673201e-01
+    -9.0411725637045204e-01
+    -7.6990267419431768e-01
+    -5.8731795428661426e-01
+    -3.6783149899818035e-01
+    -1.2523340851146880e-01
+    1.2523340851146880e-01
+    3.6783149899818035e-01
+    5.8731795428661426e-01
+    7.6990267419431779e-01
+    9.0411725637045204e-01
+    9.8156063424673201e-01];
+weights=[
+    2.0000000000000000e+00
+    1.0000000000000000e+00
+    1.0000000000000000e+00
+    5.5555555555555525e-01
+    8.8888888888888895e-01
+    5.5555555555555525e-01
+    3.4785484513745391e-01
+    6.5214515486254621e-01
+    6.5214515486254621e-01
+    3.4785484513745391e-01
+    2.3692688505618870e-01
+    4.7862867049936653e-01
+    5.6888888888888889e-01
+    4.7862867049936653e-01
+    2.3692688505618870e-01
+    1.7132449237917091e-01
+    3.6076157304813788e-01
+    4.6791393457269131e-01
+    4.6791393457269131e-01
+    3.6076157304813788e-01
+    1.7132449237917091e-01
+    1.2948496616886801e-01
+    2.7970539148927831e-01
+    3.8183005050511859e-01
+    4.1795918367346940e-01
+    3.8183005050511881e-01
+    2.7970539148927598e-01
+    1.2948496616886970e-01
+    1.0122853629037380e-01
+    2.2238103445337859e-01
+    3.1370664587788738e-01
+    3.6268378337836188e-01
+    3.6268378337836188e-01
+    3.1370664587788738e-01
+    2.2238103445337859e-01
+    1.0122853629037380e-01
+    8.1274388361575897e-02
+    1.8064816069485429e-01
+    2.6061069640293560e-01
+    3.1234707704000292e-01
+    3.3023935500125973e-01
+    3.1234707704000247e-01
+    2.6061069640293533e-01
+    1.8064816069485770e-01
+    8.1274388361572095e-02
+    6.6671344308686806e-02
+    1.4945134915057301e-01
+    2.1908636251598321e-01
+    2.6926671930999679e-01
+    2.9552422471475293e-01
+    2.9552422471475293e-01
+    2.6926671930999679e-01
+    2.1908636251598321e-01
+    1.4945134915057301e-01
+    6.6671344308686806e-02
+    5.5668567116215838e-02
+    1.2558036946487430e-01
+    1.8629021092774040e-01
+    2.3319376459199270e-01
+    2.6280454451024660e-01
+    2.7292508677790062e-01
+    2.6280454451024660e-01
+    2.3319376459199331e-01
+    1.8629021092773390e-01
+    1.2558036946491319e-01
+    5.5668567116169583e-02
+    4.7175336386475468e-02
+    1.0693932599536370e-01
+    1.6007832854335860e-01
+    2.0316742672306720e-01
+    2.3349253653835339e-01
+    2.4914704581340269e-01
+    2.4914704581340269e-01
+    2.3349253653835339e-01
+    2.0316742672306720e-01
+    1.6007832854335860e-01
+    1.0693932599536370e-01
+    4.7175336386475468e-02];
+
+% The floor((p+2)/2)-point rule has precision p.
+n=floor((p+2)/2);
+
+% Extract the nodes and weights
+ptr1=(n-1)*n/2+1;
+ptr2=n*(n+1)/2;
+qpts=nodes(ptr1:ptr2);
+qwts=weights(ptr1:ptr2);
+nqpts = length(qpts);
+if nargin==3
+    r=0.5*(b-a);
+    qpts=a+r*(qpts+1);
+    qwts=r*qwts;
+end
+end
+

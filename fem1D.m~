@@ -1,0 +1,9 @@
+% include code from all subfolders
+
+% get quadPoints, numQuadPoints, quadWeights
+prec = 3
+
+% get basis and basisDer for piecewise const and P1 finite elements
+
+
+ 
